@@ -120,8 +120,11 @@ class InfoGANTrainer(object):
                 z_var = z  # Variable(z)
                 reg_z = self.model.reg_z(z_var)
 
+                # real_label = 1
+                # fake_label = 0
+
                 # ------------------------------
-                # Update discriminator
+                # Discriminator forward real and fake images with real and fake labels correspondingly
                 # ------------------------------
                 tstart = time.time()
 
@@ -129,11 +132,11 @@ class InfoGANTrainer(object):
                 # forward pass: discriminator on REAL data
                 real_d, _, _, _ = self.model.discriminate(x_var)
                 # forward pass: discriminator on FAKE data
-                fake_x, _ = self.model.generate(z_var, is_detach=True)   # do not train G on these labels
-                fake_d, _, fake_reg_z_dist_info, _ = self.model.discriminate(fake_x)
+                fake_x, _ = self.model.generate(z_var)   # do not train G on these labels
+                fake_d, _, fake_reg_z_dist_info, _ = self.model.discriminate(fake_x.detach())  # NOTE: detach! # do not update G!
                 discriminator_loss = - torch.mean(torch.log(real_d + TINY) + torch.log(1. - fake_d + TINY))
-                discriminator_loss.backward()
-                self.discriminator_optimizer.step()
+                # discriminator_loss.backward()
+                # self.discriminator_optimizer.step()
 
                 if self.cuda:
                     D_loss = discriminator_loss.data.cpu().numpy()
@@ -143,11 +146,11 @@ class InfoGANTrainer(object):
                 print 'D_loss %f ' % D_loss,
 
                 # ------------------------------
-                # Update: generator
+                # Discriminator: forward fake images with real_labels
                 # ------------------------------
                 self.model.generator.zero_grad()
-                fake_x, _ = self.model.generate(z_var, is_detach=False)  # NOTE: do not detach
-                fake_d, _, fake_reg_z_dist_info, _ = self.model.discriminate(fake_x)
+                # fake_x, _ = self.model.generate(z_var)  # NOTE: do not detach
+                fake_d, _, fake_reg_z_dist_info, _ = self.model.discriminate(fake_x)  # NOTE: do not detach
                 generator_loss = - torch.mean(torch.log(fake_d + TINY))
 
                 if self.cuda:
@@ -157,9 +160,11 @@ class InfoGANTrainer(object):
                 log_vals['G_loss'].append(G_loss)
                 print 'G_loss %f ' % G_loss,
 
+                # ------------------------------
+                # Mutual Information
+                # ------------------------------
                 mi_est = 0.
                 cross_ent = 0.
-
                 # compute for discrete and continuous codes separately
                 # discrete:
                 if len(self.model.reg_disc_latent_dist.dists) > 0:
@@ -167,15 +172,13 @@ class InfoGANTrainer(object):
                     disc_reg_dist_info = self.model.disc_reg_dist_info(fake_reg_z_dist_info)
                     disc_log_q_c_given_x = self.model.reg_disc_latent_dist.logli(disc_reg_z, disc_reg_dist_info)  # log(Q(c|x))
                     disc_log_q_c = self.model.reg_disc_latent_dist.logli_prior(disc_reg_z)
-                    # print type(disc_log_q_c_given_x), type(disc_log_q_c),
-
                     disc_cross_ent = torch.mean(-disc_log_q_c_given_x)
                     disc_ent = torch.mean(-disc_log_q_c)  # H(C)
                     disc_mi_est = disc_ent - disc_cross_ent  # mutual information L_I(G, Q)
                     mi_est += disc_mi_est
                     cross_ent += disc_cross_ent
 
-                    # discriminator_loss -= self.info_reg_coeff * disc_mi_est
+                    discriminator_loss -= self.info_reg_coeff * disc_mi_est
                     generator_loss -= self.info_reg_coeff * disc_mi_est
 
                 if len(self.model.reg_cont_latent_dist.dists) > 0:
@@ -189,7 +192,7 @@ class InfoGANTrainer(object):
                     mi_est += cont_mi_est
                     cross_ent += cont_cross_ent
 
-                    # discriminator_loss -= self.info_reg_coeff * cont_mi_est
+                    discriminator_loss -= self.info_reg_coeff * cont_mi_est
                     generator_loss -= self.info_reg_coeff * cont_mi_est
 
                 if self.cuda:
@@ -204,9 +207,11 @@ class InfoGANTrainer(object):
                                                                    time.time()-tstart)
                 print '| %0.4fsec' % (time.time()-tstart)
 
+                discriminator_loss.backward(retain_variables=True)
+                self.discriminator_optimizer.step()
+
                 generator_loss.backward()
                 self.generator_optimizer.step()
-                InfoGANTrainer.reset_grad(self.model.generator.parameters())
 
                 if i % 50 == 0:
                     print 'SAVE'
@@ -308,3 +313,5 @@ class InfoGANTrainer(object):
 
 # create a video
 # mencoder 'mf://image_0*.png' -mf type=png:fps=10 -ovc lavc -lavcopts vcodec=wmv2 -oac copy -o image_0_Categorical.mpg
+# mencoder 'mf://image_1*.png' -mf type=png:fps=10 -ovc lavc -lavcopts vcodec=wmv2 -oac copy -o image_1_Uniform.mpg
+# mencoder 'mf://image_2*.png' -mf type=png:fps=10 -ovc lavc -lavcopts vcodec=wmv2 -oac copy -o image_2_Uniform.mpg
