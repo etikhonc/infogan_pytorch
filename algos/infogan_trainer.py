@@ -4,7 +4,7 @@
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 
-from misc.distributions import Bernoulli, Gaussian, Categorical
+from misc.distributions import Uniform, Bernoulli, Gaussian, Categorical
 from models.regularized_gan import RegularizedGAN
 import numpy as np
 import os.path
@@ -176,30 +176,30 @@ class InfoGANTrainer(object):
                     # discriminator_loss -= self.info_reg_coeff * disc_mi_est
                     generator_loss -= self.info_reg_coeff * disc_mi_est
 
-                # if len(self.model.reg_cont_latent_dist.dists) > 0:
-                #     cont_reg_z = self.model.cont_reg_z(reg_z)
-                #     cont_reg_dist_info = self.model.cont_reg_dist_info(fake_reg_z_dist_info)
-                #     cont_log_q_c_given_x = self.model.reg_cont_latent_dist.logli(cont_reg_z, cont_reg_dist_info)  # log(Q(c|x))
-                #     cont_log_q_c = self.model.reg_cont_latent_dist.logli_prior(cont_reg_z)
-                #     cont_cross_ent = torch.mean(-cont_log_q_c_given_x)
-                #     cont_ent = torch.mean(-cont_log_q_c)  # H(C)
-                #     cont_mi_est = cont_ent - cont_cross_ent  # mutual information L_I(G, Q)
-                #     mi_est += cont_mi_est
-                #     cross_ent += cont_cross_ent
-                #
-                #     # discriminator_loss -= self.info_reg_coeff * cont_mi_est
-                #     generator_loss -= self.info_reg_coeff * cont_mi_est
+                if len(self.model.reg_cont_latent_dist.dists) > 0:
+                    cont_reg_z = self.model.cont_reg_z(reg_z)
+                    cont_reg_dist_info = self.model.cont_reg_dist_info(fake_reg_z_dist_info)
+                    cont_log_q_c_given_x = self.model.reg_cont_latent_dist.logli(cont_reg_z, cont_reg_dist_info)  # log(Q(c|x))
+                    cont_log_q_c = self.model.reg_cont_latent_dist.logli_prior(cont_reg_z)
+                    cont_cross_ent = torch.mean(-cont_log_q_c_given_x)
+                    cont_ent = torch.mean(-cont_log_q_c)  # H(C)
+                    cont_mi_est = cont_ent - cont_cross_ent  # mutual information L_I(G, Q)
+                    mi_est += cont_mi_est
+                    cross_ent += cont_cross_ent
 
-                # if self.cuda:
-                #     MI = mi_est.data.cpu().numpy()
-                #     Cross_Ent = cross_ent.data.cpu().numpy()
-                # else:
-                #     MI = mi_est.data.numpy()
-                #     Cross_Ent = cross_ent.data.numpy()
-                # log_vals['MI'].append(MI)
-                # log_vals['Cross_Ent'].append(Cross_Ent)
-                # print 'lambda %f, MI %f CrossEnt %f | %0.4fsec' % (self.info_reg_coeff, MI, Cross_Ent,
-                #                                                    time.time()-tstart)
+                    # discriminator_loss -= self.info_reg_coeff * cont_mi_est
+                    generator_loss -= self.info_reg_coeff * cont_mi_est
+
+                if self.cuda:
+                    MI = mi_est  # .data.cpu().numpy()
+                    Cross_Ent = cross_ent  # .data.cpu().numpy()
+                else:
+                    MI = mi_est  # .data.numpy()
+                    Cross_Ent = cross_ent  # .data.numpy()
+                log_vals['MI'].append(MI)
+                log_vals['Cross_Ent'].append(Cross_Ent)
+                print 'lambda %f, MI %f CrossEnt %f | %0.4fsec' % (self.info_reg_coeff, MI, Cross_Ent,
+                                                                   time.time()-tstart)
                 print '| %0.4fsec' % (time.time()-tstart)
 
                 generator_loss.backward()
@@ -235,42 +235,42 @@ class InfoGANTrainer(object):
                 np.tile(self.model.reg_latent_dist.sample_prior(10).numpy(), [10, 1]),
                 self.model.reg_latent_dist.sample_prior(self.batch_size - 100).numpy()], axis=0)
 
-        offset = 0
-        for dist_idx, dist in enumerate(self.model.reg_latent_dist.dists):
+        def set_cat_range(dist):
             if isinstance(dist, Gaussian):
-                # ToDo
                 assert dist.dim == 1, "Only dim=1 is currently supported"
                 c_vals = []
                 for idx in xrange(10):
-                    c_vals.extend([-1.0 + idx * 2.0 / 9] * 10)
+                    c_vals.extend([-2.0 + idx * 4.0 / 9] * 10)
                 c_vals.extend([0.] * (self.batch_size - 100))
-                vary_cat = np.asarray(c_vals, dtype=np.float32).reshape((-1, 1))
-                cur_cat = np.copy(fixed_cat)
-                cur_cat[:, offset:offset+1] = vary_cat
-                offset += 1
+                return np.asarray(c_vals, dtype=np.float32).reshape((-1, 1))
+
             elif isinstance(dist, Categorical):
                 lookup = np.eye(dist.dim, dtype=np.float32)
                 cat_ids = []
                 for idx in xrange(10):
                     cat_ids.extend([idx] * 10)
                 cat_ids.extend([0] * (self.batch_size - 100))
-                cur_cat = np.copy(fixed_cat)
-                cur_cat[:, offset:offset+dist.dim] = lookup[cat_ids]
-                offset += dist.dim
+                return lookup[cat_ids]
             elif isinstance(dist, Bernoulli):
                 # ToDo
-                assert dist.dim == 1, "Only dim=1 is currently supported"
-                lookup = np.eye(dist.dim, dtype=np.float32)
-                cat_ids = []
-                for idx in xrange(10):
-                    cat_ids.extend([int(idx / 5)] * 10)
-                cat_ids.extend([0] * (self.batch_size - 100))
-                cur_cat = np.copy(fixed_cat)
-                cur_cat[:, offset:offset+dist.dim] = np.expand_dims(np.array(cat_ids), axis=-1)
-                # import ipdb; ipdb.set_trace()
-                offset += dist.dim
+                raise NotImplemented
             else:
                 raise NotImplementedError
+
+        offset = 0
+        for dist_idx, dist in enumerate(self.model.reg_latent_dist.dists):
+            # adjust the reg part of the latent vectors
+            cur_cat = np.copy(fixed_cat)
+            cur_cat[:, offset:offset + dist.dim] = set_cat_range(dist)
+            offset += dist.dim
+            if isinstance(dist, Gaussian):
+                sub_offset = 0
+                for sub_dist in self.model.reg_latent_dist.dists:
+                    if isinstance(sub_dist, Categorical):
+                        lookup = np.eye(sub_dist.dim, dtype=np.float32)
+                        lookup = np.tile(lookup, (10, 1))
+                        cur_cat[:lookup.shape[0], sub_offset:sub_offset + sub_dist.dim] = lookup
+                    sub_offset += sub_dist.dim
 
             # Generate images
             z = torch.from_numpy(np.concatenate([fixed_noncat, cur_cat], axis=1)).float()
@@ -305,9 +305,84 @@ class InfoGANTrainer(object):
             imgs = np.concatenate(stacked_img, 0)
 
             fig = plt.figure(figsize=(4, 4))
-            plt.imshow(imgs[:,:,0], cmap='gray')
+            plt.imshow(imgs[:, :, 0], cmap='gray')
             plt.axis('off')
 
             plt.savefig(os.path.join(self.log_dir, 'image_%d_%s_epoch_%03d_it_%03d.png' %
-                                     (dist_idx, dist.__class__.__name__, epoch, it)), bbox_inches='tight')
-            # np.save(os.path.join(self.log_dir, 'images_epoch_%d_it_%d.png' % (epoch, it)), imgs)
+                                    (dist_idx, dist.__class__.__name__, epoch, it)), bbox_inches='tight')
+
+        # offset = 0
+        # for dist_idx, dist in enumerate(self.model.reg_latent_dist.dists):
+        #     if isinstance(dist, Gaussian):
+        #         assert dist.dim == 1, "Only dim=1 is currently supported"
+        #         c_vals = []
+        #         for idx in xrange(10):
+        #             c_vals.extend([-2.0 + idx * 4.0 / 9] * 10)
+        #         c_vals.extend([0.] * (self.batch_size - 100))
+        #         vary_cat = np.asarray(c_vals, dtype=np.float32).reshape((-1, 1))
+        #         cur_cat = np.copy(fixed_cat)
+        #         cur_cat[:, offset:offset+1] = vary_cat
+        #         offset += 1
+        #     elif isinstance(dist, Categorical):
+        #         lookup = np.eye(dist.dim, dtype=np.float32)
+        #         cat_ids = []
+        #         for idx in xrange(10):
+        #             cat_ids.extend([idx] * 10)
+        #         cat_ids.extend([0] * (self.batch_size - 100))
+        #         cur_cat = np.copy(fixed_cat)
+        #         cur_cat[:, offset:offset+dist.dim] = lookup[cat_ids]
+        #         offset += dist.dim
+        #     elif isinstance(dist, Bernoulli):
+        #         # ToDo
+        #         raise NotImplemented
+        #         # assert dist.dim == 1, "Only dim=1 is currently supported"
+        #         # lookup = np.eye(dist.dim, dtype=np.float32)
+        #         # cat_ids = []
+        #         # for idx in xrange(10):
+        #         #     cat_ids.extend([int(idx / 5)] * 10)
+        #         # cat_ids.extend([0] * (self.batch_size - 100))
+        #         # cur_cat = np.copy(fixed_cat)
+        #         # cur_cat[:, offset:offset+dist.dim] = np.expand_dims(np.array(cat_ids), axis=-1)
+        #         # # import ipdb; ipdb.set_trace()
+        #         # offset += dist.dim
+        #     else:
+        #         raise NotImplementedError
+        #
+        #     # Generate images
+        #     z = torch.from_numpy(np.concatenate([fixed_noncat, cur_cat], axis=1)).float()
+        #     if self.cuda:
+        #         z = z.cuda()
+        #     z_var = Variable(z)
+        #     _, x_dist_info = self.model.generate(z_var)
+        #
+        #     if isinstance(self.model.output_dist, Bernoulli):
+        #         img_var = x_dist_info["p"]
+        #     elif isinstance(self.model.output_dist, Gaussian):
+        #         img_var = x_dist_info["mean"]
+        #     else:
+        #         raise NotImplementedError
+        #
+        #     if self.cuda:
+        #         samples = img_var.data.cpu().numpy()
+        #     else:
+        #         samples = img_var.data.numpy()
+        #
+        #     samples = self.dataset.inverse_transform(samples)
+        #     rows = 10
+        #     samples = np.reshape(samples, [self.batch_size] + list(self.dataset.image_shape))
+        #     samples = samples[:rows * rows, :, :, :]
+        #     imgs = np.reshape(samples, [rows, rows] + list(self.dataset.image_shape))
+        #     stacked_img = []
+        #     for row in xrange(rows):
+        #         row_img = []
+        #         for col in xrange(rows):
+        #             row_img.append(imgs[row, col, :, :, :])
+        #         stacked_img.append(np.concatenate(row_img, 1))
+        #     imgs = np.concatenate(stacked_img, 0)
+        #
+        #     fig = plt.figure(figsize=(4, 4))
+        #     plt.imshow(imgs[:,:,0], cmap='gray')
+        #     plt.axis('off')
+        #
+        #     plt.savefig(os.path.join(self.log_dir, 'image_%d_%s_epoch_%03d_it_%03d.png' %
+        #                              (dist_idx, dist.__class__.__name__, epoch, it)), bbox_inches='tight')
