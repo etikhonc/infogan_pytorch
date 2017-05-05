@@ -265,14 +265,6 @@ class InfoGANTrainer(object):
             cur_cat = np.copy(fixed_cat)
             cur_cat[:, offset:offset + dist.dim] = set_cat_range(dist)
             offset += dist.dim
-            if isinstance(dist, Gaussian):
-                sub_offset = 0
-                for sub_dist in self.model.reg_latent_dist.dists:
-                    if isinstance(sub_dist, Categorical):
-                        lookup = np.eye(sub_dist.dim, dtype=np.float32)
-                        lookup = np.tile(lookup, (10, 1))
-                        cur_cat[:lookup.shape[0], sub_offset:sub_offset + sub_dist.dim] = lookup
-                    sub_offset += sub_dist.dim
 
             # Generate images
             z = torch.from_numpy(np.concatenate([fixed_noncat, cur_cat], axis=1)).float()
