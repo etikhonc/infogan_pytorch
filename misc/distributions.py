@@ -3,13 +3,14 @@
 
 import itertools
 import torch
+from torch.autograd import Variable
 import torch.nn.functional as F
 
 import numpy as np
 
 TINY = 1e-8
 # dtype = torch.FloatTensor
-dtype = torch.cuda.FloatTensor
+# dtype = torch.cuda.FloatTensor
 
 # ToDo change all classes to work/produce variables instead of tensors.
 #  This should help to get rid of the is_tensor check
@@ -17,8 +18,8 @@ dtype = torch.cuda.FloatTensor
 
 # https://github.com/pytorch/pytorch/issues/812
 def embedding_lookup(embeddings, indices):
-    if not torch.is_tensor(indices):
-        indices = indices.data
+    # if not torch.is_tensor(indices):
+    #     indices = indices.data
     return embeddings.index_select(0, indices.view(-1)).view(*(indices.size() + embeddings.size()[1:]))
 
 
@@ -118,8 +119,13 @@ class Distribution(object):
 
 
 class Categorical(Distribution):
-    def __init__(self, dim):
+    def __init__(self, dim, cuda=False):
         self._dim = dim
+        self.cuda = cuda
+        if cuda:
+            self.dtype = torch.FloatTensor
+        else:
+            self.dtype = dtype = torch.cuda.FloatTensor
 
     @property
     def dim(self):
@@ -135,17 +141,17 @@ class Categorical(Distribution):
 
     def logli(self, x_var, dist_info):
         prob = dist_info["prob"]
-        if not torch.is_tensor(prob):
-            prob = prob.data
-        if not torch.is_tensor(x_var):
-            x_var = x_var.data
+        # if not torch.is_tensor(prob):
+        #     prob = prob.data
+        # if not torch.is_tensor(x_var):
+        #     x_var = x_var.data
         return torch.sum(torch.log(prob + TINY) * x_var, 1)
         # return tf.reduce_sum(tf.log(prob + TINY) * x_var, reduction_indices=1)
 
     def prior_dist_info(self, batch_size):
-        prob = torch.from_numpy(np.ones((batch_size, self.dim), dtype=np.float32) / float(self.dim)).type(dtype)
-        # prob = tf.ones([batch_size, self.dim]) * floatX(1.0 / self.dim)
-        return dict(prob=prob)
+        prob_tmp = np.ones((batch_size, self.dim), dtype=np.float32) / float(self.dim)
+        prob = torch.from_numpy(prob_tmp).type(self.dtype)
+        return dict(prob=Variable(prob))
 
     def marginal_logli(self, x_var, dist_info):
         prob = dist_info["prob"]
@@ -175,12 +181,12 @@ class Categorical(Distribution):
         prob = dist_info["prob"]
         ids = torch.multinomial(prob, num_samples=1)[:, 0]
         # ids = tf.multinomial(tf.log(prob + TINY), num_samples=1)[:, 0]
-        onehot = torch.from_numpy(np.eye(self.dim, dtype=np.float32)).type(dtype)
+        onehot_tmp = np.eye(self.dim, dtype=np.float32)
+        onehot = Variable(torch.from_numpy(onehot_tmp).type(self.dtype))
         return embedding_lookup(onehot, ids)
 
     def activate_dist(self, flat_dist):
         return dict(prob=F.softmax(flat_dist))
-        # return dict(prob=F.softmax(flat_dist).data)
 
     def entropy(self, dist_info):
         prob = dist_info["prob"]
@@ -203,9 +209,14 @@ class Categorical(Distribution):
 
 
 class Gaussian(Distribution):
-    def __init__(self, dim, fix_std=False):
+    def __init__(self, dim, fix_std=False, cuda=False):
         self._dim = dim
         self._fix_std = fix_std
+        self.cuda = cuda
+        if cuda:
+            self.dtype = torch.FloatTensor
+        else:
+            self.dtype = dtype = torch.cuda.FloatTensor
 
     @property
     def dim(self):
@@ -222,23 +233,23 @@ class Gaussian(Distribution):
     def logli(self, x_var, dist_info):
         mean = dist_info["mean"]
         stddev = dist_info["stddev"]
-        if not torch.is_tensor(x_var):
-            x_var = x_var.data
-        if not torch.is_tensor(mean):
-            mean = mean.data
-        if not torch.is_tensor(stddev):
-            stddev = stddev.data
+        # if not torch.is_tensor(x_var):
+        #     x_var = x_var.data
+        # if not torch.is_tensor(mean):
+        #     mean = mean.data
+        # if not torch.is_tensor(stddev):
+        #     stddev = stddev.data
         epsilon = (x_var - mean) / (stddev + TINY)
-        return torch.sum(- 0.5 * np.log(2 * np.pi) - torch.log(stddev + TINY) - 0.5 * epsilon*epsilon, dim=1)
+        tmp_const = torch.from_numpy(- 0.5 * np.log(2 * np.pi*np.ones(stddev.size()))).type(self.dtype)
+        return torch.sum(Variable(tmp_const) - torch.log(stddev + TINY) - 0.5 * epsilon*epsilon, dim=1)
 
     def prior_dist_info(self, batch_size):
-        mean = torch.zeros([batch_size, self.dim]).type(dtype)
-        stddev = torch.ones([batch_size, self.dim]).type(dtype)
-        return dict(mean=mean, stddev=stddev)
+        mean = torch.zeros([batch_size, self.dim]).type(self.dtype)
+        stddev = torch.ones([batch_size, self.dim]).type(self.dtype)
+        return dict(mean=Variable(mean), stddev=Variable(stddev))
 
     def nonreparam_logli(self, x_var, dist_info):
-        return torch.zeros(x_var[:, 0].size()).type(dtype)
-        # return tf.zeros_like(x_var[:, 0])
+        return Variable(torch.zeros(x_var[:, 0].size()).type(self.dtype))
 
     def kl(self, p, q):
         p_mean = p["mean"]
@@ -259,12 +270,12 @@ class Gaussian(Distribution):
     def sample(self, dist_info):
         mean = dist_info["mean"]
         stddev = dist_info["stddev"]
-        epsilon = torch.randn(mean.size()).type(dtype)
+        epsilon = Variable(torch.randn(mean.size()).type(self.dtype))
 
-        if not torch.is_tensor(mean):
-            mean = mean.data
-        if not torch.is_tensor(stddev):
-            stddev = stddev.data
+        # if not torch.is_tensor(mean):
+        #     mean = mean.data
+        # if not torch.is_tensor(stddev):
+        #     stddev = stddev.data
         return mean + epsilon * stddev
 
 
@@ -273,9 +284,11 @@ class Gaussian(Distribution):
         return ["mean", "stddev"]
 
     def activate_dist(self, flat_dist):
-        mean = flat_dist[:, :self.dim].type(dtype)
+        mean = flat_dist[:, :self.dim].type(self.dtype)
+        if torch.is_tensor(mean):
+            mean = Variable(mean)
         if self._fix_std:
-            stddev = torch.ones(mean.size()).type(dtype)
+            stddev = Variable(torch.ones(mean.size()).type(self.dtype))
         else:
             stddev = torch.sqrt(torch.exp(flat_dist[:, self.dim:]))
         return dict(mean=mean, stddev=stddev)
@@ -298,12 +311,17 @@ class Uniform(Gaussian):
     #     raise NotImplementedError
 
     def sample_prior(self, batch_size):
-        return torch.Tensor(batch_size, self.dim).uniform_(-1., 1.).type(dtype)
+        return Variable(torch.Tensor(batch_size, self.dim).uniform_(-1., 1.).type(self.dtype))
 
 
 class Bernoulli(Distribution):
-    def __init__(self, dim):
+    def __init__(self, dim, cuda=False):
         self._dim = dim
+        self.cuda = cuda
+        if cuda:
+            self.dtype = torch.FloatTensor
+        else:
+            self.dtype = torch.cuda.FloatTensor
 
     @property
     def dim(self):
@@ -330,15 +348,14 @@ class Bernoulli(Distribution):
 
     def activate_dist(self, flat_dist):
         return dict(p=F.sigmoid(flat_dist))
-        # return dict(p=F.sigmoid(flat_dist).data)
 
     def sample(self, dist_info):
         p = dist_info["p"]
-        ind = np.random.rand(p.get_shape()) < p
-        return torch.from_numpy(ind).type(dtype)
+        ind = Variable(np.random.rand(p.get_shape()) < p)
+        return torch.from_numpy(ind).type(self.dtype)
 
     def prior_dist_info(self, batch_size):
-        return dict(p=0.5 * torch.ones([batch_size, self.dim]).type(dtype))
+        return dict(p=Variable(0.5 * torch.ones([batch_size, self.dim]).type(self.dtype)))
 
 
 class MeanBernoulli(Bernoulli):
@@ -351,7 +368,7 @@ class MeanBernoulli(Bernoulli):
         return dist_info["p"]
 
     def nonreparam_logli(self, x_var, dist_info):
-        return torch.zeros(x_var.shape).type(dtype)  #  tf.zeros_like(x_var[:, 0])
+        return Variable(torch.zeros(x_var.shape).type(self.dtype))
 
 
 # class MeanCenteredUniform(MeanBernoulli):

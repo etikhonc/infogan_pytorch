@@ -32,7 +32,7 @@ if __name__ == "__main__":
     root_checkpoint_dir = "output/ckt/mnist"
     batch_size = 128
     # updates_per_epoch = 100
-    max_epoch = 1
+    max_epoch = 50
 
     exp_name = "mnist_%s" % timestamp
 
@@ -67,7 +67,7 @@ if __name__ == "__main__":
         log_dir=log_dir,
         checkpoint_dir=checkpoint_dir,
         max_epoch=max_epoch,
-        updates_per_epoch=10,  #dataset.train.epochs_size,  # updates_per_epoch,
+        updates_per_epoch=dataset.train.epochs_size,  # updates_per_epoch,
         info_reg_coeff=1.0,
         generator_learning_rate=1e-3,
         discriminator_learning_rate=2e-4,
