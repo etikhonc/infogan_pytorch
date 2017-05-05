@@ -44,12 +44,8 @@ class RegularizedGAN(object):
         reg_dist_info = self.reg_latent_dist.activate_dist(reg_dist_flat)
         return d, self.reg_latent_dist.sample(reg_dist_info), reg_dist_info, reg_dist_flat
 
-    def generate(self, z_var, is_detach=False):
-        # g_out = self.generator.forward(z_var)
-        if is_detach:
-            g_out = self.generator(z_var).detach()
-        else:
-            g_out = self.generator(z_var)
+    def generate(self, z_var):
+        g_out = self.generator.forward(z_var)
         x_dist_flat = g_out
         x_dist_info = self.output_dist.activate_dist(x_dist_flat)
         return self.output_dist.sample(x_dist_info), x_dist_info
